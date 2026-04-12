@@ -5,26 +5,26 @@ import WebSocket from "ws";
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// ========================
+// ======================
 // Middleware
-// ========================
+// ======================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ========================
-// Routes
-// ========================
-
+// ======================
+// Health + Home
+// ======================
 app.get("/", (req, res) => {
     res.send("HRCS USA AI is Active!");
 });
 
-// Railway healthcheck (IMPORTANT)
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
 });
 
-// Twilio Voice Webhook
+// ======================
+// Twilio Webhook
+// ======================
 app.post("/voice", (req, res) => {
     res.type("text/xml");
 
@@ -39,27 +39,37 @@ app.post("/voice", (req, res) => {
     `);
 });
 
-// ========================
+// ======================
 // Start server
-// ========================
+// ======================
 const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on ${PORT}`);
 });
 
-// ========================
+// ======================
 // WebSocket Server (Twilio)
-// ========================
+// ======================
 const wss = new WebSocketServer({
     server,
     path: "/media-stream",
 });
 
+// ======================
+// STATE CONTROL (IMPORTANT FIX)
+// ======================
+let isOpenAiReady = false;
+let started = false;
+let audioBuffer = [];
+
+// ======================
+// Connection handler
+// ======================
 wss.on("connection", (ws) => {
     console.log("📞 Twilio connected");
 
-    // ========================
-    // OpenAI Realtime Connect
-    // ========================
+    // ======================
+    // OpenAI Realtime connect
+    // ======================
     const openAiWs = new WebSocket(
         "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
         {
@@ -70,53 +80,80 @@ wss.on("connection", (ws) => {
         }
     );
 
+    // ======================
+    // OPENAI CONNECTED
+    // ======================
     openAiWs.on("open", () => {
+        isOpenAiReady = true;
+        started = false;
         console.log("🧠 OpenAI connected");
 
-        // Session setup
         openAiWs.send(
             JSON.stringify({
                 type: "session.update",
                 session: {
                     instructions:
-                        "You are a professional phone receptionist for HRCS USA in Katy, Texas. Collect: name, address, service type (Garage doors, Electrical, TV mounting). Ask one question at a time. Be short, polite, and natural.",
+                        "You are a professional phone receptionist for HRCS USA in Katy, Texas. Collect name, address, and service type (Garage doors, Electrical, TV mounting). Ask one question at a time. Be short and polite.",
                     voice: "alloy",
                     input_audio_format: "g711_ulaw",
                     output_audio_format: "g711_ulaw",
                 },
             })
         );
-
-        // Start response session
-        openAiWs.send(
-            JSON.stringify({
-                type: "response.create",
-            })
-        );
     });
 
-    // ========================
-    // Twilio → OpenAI (audio)
-    // ========================
+    // ======================
+    // TWILIO → OPENAI
+    // ======================
     ws.on("message", (message) => {
         let data;
 
         try {
             data = JSON.parse(message.toString());
-        } catch (err) {
+        } catch {
             return;
         }
 
-        if (
-            data.event === "media" &&
-            openAiWs.readyState === WebSocket.OPEN
-        ) {
+        if (data.event === "media") {
+            const audio = data.media.payload;
+
+            // buffer until OpenAI ready
+            if (!isOpenAiReady) {
+                audioBuffer.push(audio);
+                return;
+            }
+
+            // send audio
             openAiWs.send(
                 JSON.stringify({
                     type: "input_audio_buffer.append",
-                    audio: data.media.payload,
+                    audio,
                 })
             );
+
+            // flush buffer once
+            if (audioBuffer.length > 0) {
+                for (const chunk of audioBuffer) {
+                    openAiWs.send(
+                        JSON.stringify({
+                            type: "input_audio_buffer.append",
+                            audio: chunk,
+                        })
+                    );
+                }
+                audioBuffer = [];
+            }
+
+            // START ONLY ON FIRST AUDIO (CRITICAL FIX)
+            if (!started) {
+                started = true;
+
+                openAiWs.send(
+                    JSON.stringify({
+                        type: "response.create",
+                    })
+                );
+            }
         }
 
         if (data.event === "start") {
@@ -124,15 +161,15 @@ wss.on("connection", (ws) => {
         }
     });
 
-    // ========================
-    // OpenAI → Twilio (audio)
-    // ========================
+    // ======================
+    // OPENAI → TWILIO
+    // ======================
     openAiWs.on("message", (message) => {
         let response;
 
         try {
             response = JSON.parse(message.toString());
-        } catch (err) {
+        } catch {
             return;
         }
 
@@ -152,9 +189,9 @@ wss.on("connection", (ws) => {
         }
     });
 
-    // ========================
-    // Cleanup
-    // ========================
+    // ======================
+    // CLEANUP (CRITICAL FIX)
+    // ======================
     ws.on("close", () => {
         console.log("📞 Twilio disconnected");
         openAiWs.close();
