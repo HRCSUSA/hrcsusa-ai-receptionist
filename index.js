@@ -18,7 +18,7 @@ app.post('/voice', (req, res) => {
     `);
 });
 
-const server = app.listen(PORT, () => console.log(`Server on port ${PORT}`));
+const server = app.listen(PORT, '0.0.0.0', () => {console.log(`Server running on ${PORT}`);});
 const wss = new WebSocketServer({ server, path: '/media-stream' });
 
 wss.on('connection', (ws) => {
