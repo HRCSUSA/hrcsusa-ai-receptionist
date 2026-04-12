@@ -12,7 +12,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ======================
-// Health + Home
+// Routes
 // ======================
 app.get("/", (req, res) => {
     res.send("HRCS USA AI is Active!");
@@ -40,14 +40,14 @@ app.post("/voice", (req, res) => {
 });
 
 // ======================
-// Start server
+// Server
 // ======================
 const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on ${PORT}`);
 });
 
 // ======================
-// WebSocket Server (Twilio)
+// WebSocket Server
 // ======================
 const wss = new WebSocketServer({
     server,
@@ -55,21 +55,18 @@ const wss = new WebSocketServer({
 });
 
 // ======================
-// STATE CONTROL (IMPORTANT FIX)
+// STATE
 // ======================
 let isOpenAiReady = false;
-let started = false;
 let audioBuffer = [];
+let started = false;
 
 // ======================
-// Connection handler
+// CONNECTION
 // ======================
 wss.on("connection", (ws) => {
     console.log("📞 Twilio connected");
 
-    // ======================
-    // OpenAI Realtime connect
-    // ======================
     const openAiWs = new WebSocket(
         "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
         {
@@ -81,25 +78,22 @@ wss.on("connection", (ws) => {
     );
 
     // ======================
-    // OPENAI CONNECTED
+    // OPENAI CONNECT
     // ======================
     openAiWs.on("open", () => {
         isOpenAiReady = true;
-        started = false;
         console.log("🧠 OpenAI connected");
 
-        openAiWs.send(
-            JSON.stringify({
-                type: "session.update",
-                session: {
-                    instructions:
-                        "You are a professional phone receptionist for HRCS USA in Katy, Texas. Collect name, address, and service type (Garage doors, Electrical, TV mounting). Ask one question at a time. Be short and polite.",
-                    voice: "alloy",
-                    input_audio_format: "g711_ulaw",
-                    output_audio_format: "g711_ulaw",
-                },
-            })
-        );
+        openAiWs.send(JSON.stringify({
+            type: "session.update",
+            session: {
+                instructions:
+                    "You are a professional phone receptionist for HRCS USA in Katy, Texas. Collect name, address, and service type (Garage doors, Electrical, TV mounting). Ask one question at a time. Be short and polite.",
+                voice: "alloy",
+                input_audio_format: "g711_ulaw",
+                output_audio_format: "g711_ulaw",
+            },
+        }));
     });
 
     // ======================
@@ -117,42 +111,34 @@ wss.on("connection", (ws) => {
         if (data.event === "media") {
             const audio = data.media.payload;
 
-            // buffer until OpenAI ready
             if (!isOpenAiReady) {
                 audioBuffer.push(audio);
                 return;
             }
 
-            // send audio
-            openAiWs.send(
-                JSON.stringify({
-                    type: "input_audio_buffer.append",
-                    audio,
-                })
-            );
+            openAiWs.send(JSON.stringify({
+                type: "input_audio_buffer.append",
+                audio,
+            }));
 
-            // flush buffer once
+            // flush buffer once OpenAI is ready
             if (audioBuffer.length > 0) {
                 for (const chunk of audioBuffer) {
-                    openAiWs.send(
-                        JSON.stringify({
-                            type: "input_audio_buffer.append",
-                            audio: chunk,
-                        })
-                    );
+                    openAiWs.send(JSON.stringify({
+                        type: "input_audio_buffer.append",
+                        audio: chunk,
+                    }));
                 }
                 audioBuffer = [];
             }
 
-            // START ONLY ON FIRST AUDIO (CRITICAL FIX)
+            // IMPORTANT FIX: commit ONLY once stream starts
             if (!started) {
                 started = true;
 
-                openAiWs.send(
-                    JSON.stringify({
-                        type: "response.create",
-                    })
-                );
+                openAiWs.send(JSON.stringify({
+                    type: "input_audio_buffer.commit"
+                }));
             }
         }
 
@@ -178,19 +164,17 @@ wss.on("connection", (ws) => {
             response.delta &&
             ws.readyState === WebSocket.OPEN
         ) {
-            ws.send(
-                JSON.stringify({
-                    event: "media",
-                    media: {
-                        payload: response.delta,
-                    },
-                })
-            );
+            ws.send(JSON.stringify({
+                event: "media",
+                media: {
+                    payload: response.delta,
+                },
+            }));
         }
     });
 
     // ======================
-    // CLEANUP (CRITICAL FIX)
+    // CLEANUP
     // ======================
     ws.on("close", () => {
         console.log("📞 Twilio disconnected");
