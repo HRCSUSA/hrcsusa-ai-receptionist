@@ -5,7 +5,7 @@ import WebSocket from 'ws';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => res.send('HR Construction AI is Active!'));
+app.get('/', (req, res) => res.send('HRCS USA AI is Active!'));
 
 app.post('/voice', (req, res) => {
     res.type('text/xml');
@@ -33,7 +33,7 @@ wss.on('connection', (ws) => {
         openAiWs.send(JSON.stringify({
             type: "session.update",
             session: {
-                instructions: "You are a professional phone assistant for HR Construction & Service in Katy, Texas. Your goal is to be polite, collect the customer's name, address, and service type (Garage doors, Electrical, TV mounting). Ask only one question at a time. Be concise.",
+                instructions: "You are a professional phone assistant for HRCS USA in Katy, Texas. Your goal is to be polite, collect the customer's name, address, and service type (Garage doors, Electrical, TV mounting). Ask only one question at a time. Be concise.",
                 voice: "alloy",
                 input_audio_format: "g711_ulaw",
                 output_audio_format: "g711_ulaw",
