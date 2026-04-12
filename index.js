@@ -5,16 +5,26 @@ import WebSocket from "ws";
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// ========================
 // Middleware
+// ========================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Health check
+// ========================
+// Routes
+// ========================
+
 app.get("/", (req, res) => {
     res.send("HRCS USA AI is Active!");
 });
 
-// Twilio Voice webhook
+// Railway healthcheck (IMPORTANT)
+app.get("/health", (req, res) => {
+    res.status(200).send("OK");
+});
+
+// Twilio Voice Webhook
 app.post("/voice", (req, res) => {
     res.type("text/xml");
 
@@ -29,22 +39,27 @@ app.post("/voice", (req, res) => {
     `);
 });
 
-// Start HTTP server
+// ========================
+// Start server
+// ========================
 const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on ${PORT}`);
 });
 
-// WebSocket server for Twilio Media Stream
+// ========================
+// WebSocket Server (Twilio)
+// ========================
 const wss = new WebSocketServer({
     server,
     path: "/media-stream",
 });
 
-// Handle Twilio connection
 wss.on("connection", (ws) => {
-    console.log("Twilio connected");
+    console.log("📞 Twilio connected");
 
-    // Connect to OpenAI Realtime
+    // ========================
+    // OpenAI Realtime Connect
+    // ========================
     const openAiWs = new WebSocket(
         "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
         {
@@ -56,7 +71,7 @@ wss.on("connection", (ws) => {
     );
 
     openAiWs.on("open", () => {
-        console.log("OpenAI connected");
+        console.log("🧠 OpenAI connected");
 
         // Session setup
         openAiWs.send(
@@ -64,7 +79,7 @@ wss.on("connection", (ws) => {
                 type: "session.update",
                 session: {
                     instructions:
-                        "You are a professional phone assistant for HRCS USA in Katy, Texas. Collect customer name, address, and service type (Garage doors, Electrical, TV mounting). Ask one question at a time. Be concise and polite.",
+                        "You are a professional phone receptionist for HRCS USA in Katy, Texas. Collect: name, address, service type (Garage doors, Electrical, TV mounting). Ask one question at a time. Be short, polite, and natural.",
                     voice: "alloy",
                     input_audio_format: "g711_ulaw",
                     output_audio_format: "g711_ulaw",
@@ -80,13 +95,15 @@ wss.on("connection", (ws) => {
         );
     });
 
-    // Twilio → OpenAI (audio stream)
+    // ========================
+    // Twilio → OpenAI (audio)
+    // ========================
     ws.on("message", (message) => {
         let data;
 
         try {
             data = JSON.parse(message.toString());
-        } catch (e) {
+        } catch (err) {
             return;
         }
 
@@ -102,23 +119,23 @@ wss.on("connection", (ws) => {
             );
         }
 
-        // Start signal from Twilio
         if (data.event === "start") {
-            console.log("Stream started");
+            console.log("🎙️ Stream started");
         }
     });
 
-    // OpenAI → Twilio (audio back)
+    // ========================
+    // OpenAI → Twilio (audio)
+    // ========================
     openAiWs.on("message", (message) => {
         let response;
 
         try {
             response = JSON.parse(message.toString());
-        } catch (e) {
+        } catch (err) {
             return;
         }
 
-        // Audio chunk from OpenAI
         if (
             response.type === "response.audio.delta" &&
             response.delta &&
@@ -135,14 +152,16 @@ wss.on("connection", (ws) => {
         }
     });
 
+    // ========================
     // Cleanup
+    // ========================
     ws.on("close", () => {
-        console.log("Twilio disconnected");
+        console.log("📞 Twilio disconnected");
         openAiWs.close();
     });
 
     openAiWs.on("close", () => {
-        console.log("OpenAI disconnected");
+        console.log("🧠 OpenAI disconnected");
         ws.close();
     });
 
