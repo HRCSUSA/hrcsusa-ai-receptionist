@@ -14,12 +14,14 @@ app.get("/", (req, res) => {
 
 // Voice endpoint (Twilio)
 app.post("/voice", (req, res) => {
+    console.log("VOICE HIT NEW CODE");
+
     res.set("Content-Type", "text/xml");
 
     res.send(`
         <Response>
             <Say voice="Polly.Joanna" language="en-US">
-                Hello! This is your AI receptionist. Please say how can I help you.
+                NEW CODE WORKING
             </Say>
         </Response>
     `);
