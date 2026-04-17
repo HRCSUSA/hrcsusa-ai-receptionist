@@ -9,19 +9,19 @@ app.use(express.urlencoded({ extended: true }));
 
 // Home route
 app.get("/", (req, res) => {
-    res.send("HRCS USA AI is Active!");
+    res.send("CLEAN RESET 999");
 });
 
 // Voice endpoint (Twilio)
 app.post("/voice", (req, res) => {
-    console.log("VOICE HIT NEW CODE");
+    console.log("🔥 NEW CLEAN CODE");
 
     res.set("Content-Type", "text/xml");
 
     res.send(`
         <Response>
-            <Say voice="Polly.Joanna" language="en-US">
-                NEW CODE WORKING
+            <Say>
+                CLEAN VERSION WORKING
             </Say>
         </Response>
     `);
