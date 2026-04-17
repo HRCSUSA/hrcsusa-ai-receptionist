@@ -13,18 +13,8 @@ app.get("/", (req, res) => {
 });
 
 // Voice endpoint (Twilio)
-app.post("/voice", (req, res) => {
-    console.log("🔥 NEW CLEAN CODE");
-
-    res.set("Content-Type", "text/xml");
-
-    res.send(`
-        <Response>
-            <Say>
-                CLEAN VERSION WORKING
-            </Say>
-        </Response>
-    `);
+app.get("/", (req, res) => {
+    res.send("🔥 VERSION 999 TEST ACTIVE");
 });
 
 // Start server
