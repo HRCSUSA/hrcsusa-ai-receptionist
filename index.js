@@ -14,7 +14,7 @@ app.get("/", (req, res) => {
 
 // Voice endpoint (Twilio)
 app.get("/", (req, res) => {
-    res.send("🔥 VERSION 999 TEST ACTIVE");
+    res.send("🔥 HARD DEPLOY TEST 12345");
 });
 
 // Start server
