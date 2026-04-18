@@ -9,9 +9,9 @@ app.use(express.json());
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ===============================
-// SERVER STATE (ВАЖЛИВО)
+// CRM STATE (PRO STRUCTURE)
 // ===============================
-let sessionState = {
+let session = {
     phase: "problem",
     lead: {
         name: "",
@@ -25,112 +25,71 @@ let sessionState = {
 };
 
 // ===============================
-// SYSTEM PROMPT (FLOW CONTROLLED)
-// ===============================
-const SYSTEM_PROMPT = `
-You are a professional phone dispatcher for HRCS USA (Katy, Texas).
-
-IMPORTANT:
-You are continuing an ongoing phone conversation.
-Do NOT restart the flow.
-Follow the current phase from server state.
-
-FLOW:
-
-PHASE 1 - PROBLEM:
-- Let customer describe issue
-- Ask follow-up questions about problem
-- Do NOT ask for personal info
-
-PHASE 2 - DETAILS:
-- Clarify job details (size, damage, urgency, location of issue)
-
-PHASE 3 - CONTACT:
-ONLY AFTER full understanding:
-- Ask full name
-- Then phone number
-- Then address
-
-PHASE 4 - SCHEDULING:
-- Discuss appointment time
-- Prepare booking
-
-RULES:
-- Ask ONE question at a time
-- Keep responses short and natural
-- Act like a real dispatcher
-- Never overwhelm customer
-- Never collect contact info too early
-
-SERVICES:
-- Garage door repair
-- Electrical work
-- TV installation
-- Appliance Installation & Repair
-- Security Systems & Access Control
-- Door Hardware & Locksmith
-- Furniture Assembly
-- General Mounting Services
-
-OUTPUT FORMAT (STRICT JSON):
-{
-  "reply": "what you say to customer",
-  "phase": "problem | details | contact | scheduling | done",
-  "data": {
-    "name": "",
-    "phone": "",
-    "address": "",
-    "service": "",
-    "issue": "",
-    "details": "",
-    "datetime": ""
-  }
-}
-`;
-
-// ===============================
 // VOICE ENTRY
 // ===============================
 app.post("/voice", (req, res) => {
     res.type("text/xml");
+
+    session.phase = "problem";
+    session.lead = {};
+
     res.send(`
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        Hello! Thank you for calling H R C S USA. How can I help you today?
+        Thank you for calling H R C S USA. Tell me what issue you're experiencing.
     </Say>
 
-    <Gather input="speech" action="/respond" language="en-US" speechTimeout="auto">
-        <Say voice="Polly.Joanna-Neural" language="en-US">
-            Please describe the issue you're having.
-        </Say>
-    </Gather>
+    <Gather input="speech" action="/respond" method="POST" language="en-US" speechTimeout="auto" timeout="8"/>
 </Response>
     `);
 });
 
 // ===============================
-// MAIN AI FLOW
+// PHASE CONTROLLER (SERVER DECIDES FLOW)
+// ===============================
+function getNextPhase(current) {
+    const order = ["problem", "details", "contact", "scheduling", "done"];
+    const index = order.indexOf(current);
+    return order[Math.min(index + 1, order.length - 1)];
+}
+
+// ===============================
+// MAIN HANDLER
 // ===============================
 app.post("/respond", async (req, res) => {
-    const userSpeech = req.body.SpeechResult;
+    const userSpeech = req.body.SpeechResult || "";
 
     res.type("text/xml");
 
     try {
+
+        // ===============================
+        // AI EXTRACTION ONLY (NO FLOW CONTROL)
+        // ===============================
         const completion = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             response_format: { type: "json_object" },
             messages: [
                 {
                     role: "system",
-                    content: SYSTEM_PROMPT
-                },
-                {
-                    role: "system",
                     content: `
-CURRENT STATE:
-Phase: ${sessionState.phase}
-Lead Data: ${JSON.stringify(sessionState.lead)}
+Extract structured data from customer speech.
+
+Return JSON:
+{
+  "reply": "natural short human response",
+  "service": "",
+  "issue": "",
+  "details": "",
+  "name": "",
+  "phone": "",
+  "address": ""
+}
+
+Rules:
+- DO NOT control conversation flow
+- ONLY extract info + generate natural reply
+- No robotic phrases
                     `
                 },
                 {
@@ -140,33 +99,48 @@ Lead Data: ${JSON.stringify(sessionState.lead)}
             ]
         });
 
-        const result = JSON.parse(completion.choices[0].message.content);
+        let ai;
+
+        try {
+            ai = JSON.parse(completion.choices[0].message.content);
+        } catch (e) {
+            ai = { reply: "Could you repeat that please?" };
+        }
 
         // ===============================
-        // UPDATE STATE
+        // UPDATE CRM
         // ===============================
-        sessionState.phase = result.phase;
-
-        sessionState.lead = {
-            ...sessionState.lead,
-            ...result.data
+        session.lead = {
+            ...session.lead,
+            ...ai
         };
 
-        const reply = escapeXml(result.reply);
+        // ===============================
+        // SERVER CONTROLS FLOW (PRO LOGIC)
+        // ===============================
+        if (session.phase === "problem") {
+            session.phase = "details";
+        } else if (session.phase === "details") {
+            if (ai.issue && ai.issue.length > 3) {
+                session.phase = "contact";
+            }
+        } else if (session.phase === "contact") {
+            if (session.lead.name && session.lead.phone && session.lead.address) {
+                session.phase = "scheduling";
+            }
+        }
+
+        const responseText = escapeXml(ai.reply || "Okay, go on.");
 
         res.send(`
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        ${reply}
+        ${responseText}
     </Say>
 
     <Pause length="1"/>
 
-    <Gather input="speech" action="/respond" language="en-US" speechTimeout="auto">
-        <Say voice="Polly.Joanna-Neural" language="en-US">
-            I'm listening.
-        </Say>
-    </Gather>
+    <Gather input="speech" action="/respond" method="POST" language="en-US" speechTimeout="auto" timeout="8"/>
 </Response>
         `);
 
@@ -176,15 +150,13 @@ Lead Data: ${JSON.stringify(sessionState.lead)}
         res.send(`
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        Sorry, there was a technical issue. We will contact you shortly.
+        Sorry, there was an issue. Please try again.
     </Say>
 </Response>
         `);
     }
 });
 
-// ===============================
-// XML SAFE FUNCTION
 // ===============================
 function escapeXml(text = "") {
     return text
@@ -198,5 +170,5 @@ function escapeXml(text = "") {
 // ===============================
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-    console.log("🚀 HRCS USA AI Receptionist RUNNING");
+    console.log("🚀 HRCS PRO AI SYSTEM RUNNING");
 });
