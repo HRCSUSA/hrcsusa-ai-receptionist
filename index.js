@@ -1,20 +1,39 @@
 import express from "express";
-const app = express();
+import OpenAI from "openai";
 
+const app = express();
 app.use(express.urlencoded({ extended: true }));
 
-app.post("/voice", (req, res) => {
-    console.log("📞 Incoming call!");
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+app.post("/voice", async (req, res) => {
     res.type("text/xml");
-    res.send(`
-        <Response>
-            <Say voice="Polly.Joanna">Hello! We are testing the connection. If you hear this, it works!</Say>
-            <Hangup/>
-        </Response>
-    `);
+    try {
+        // Тестовий запит до OpenAI
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [{ role: "user", content: "Say: Your key is working" }],
+        });
+        
+        const responseText = completion.choices[0].message.content;
+
+        res.send(`
+            <Response>
+                <Say voice="Polly.Joanna" language="en-US">
+                    Connection successful. OpenAI says: ${responseText}
+                </Say>
+                <Hangup/>
+            </Response>
+        `);
+    } catch (error) {
+        res.send(`
+            <Response>
+                <Say>Error. Your AI key is not working. Check your balance or key status.</Say>
+                <Hangup/>
+            </Response>
+        `);
+    }
 });
 
-app.get("/", (req, res) => res.send("Server is UP"));
-
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Ready on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Test server on port ${PORT}`));
