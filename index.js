@@ -7,31 +7,35 @@ app.use(express.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// СИСТЕМА CRM (Тимчасова, поки не підключимо Telegram/Make)
-const leads = new Map(); 
+// CRM Layer: Тимчасове сховище даних у пам'яті
+const activeCalls = new Map();
 
 const SYSTEM_PROMPT = `
-You are a professional HRCS USA dispatcher. 
-Follow these logical steps:
-1. Greet and identify which of our services they need.
-2. Ask for their Name and Address in Katy, TX.
-3. Once you have the info, end the call professionally.
+You are the Executive AI Dispatcher for HRCS USA in Katy, Texas. 
+Your goal is to handle incoming service calls professionally in English.
 
-SERVICES: Garage Doors, Electrical, TV Installation, Appliances, Security, Locksmith, Furniture Assembly, General Mounting.
+SERVICES:
+- Garage door repair, Electrical work, TV installation, Appliance Repair, Security Systems, Locksmith, Furniture Assembly, General Mounting.
 
-OUTPUT FORMAT: Always respond in Ukrainian or English (match the customer). 
-If you have collected Name, Service, and Address, include the tag [LEAD_COMPLETE] at the end.
+CONVERSATION LOGIC:
+1. Greet: "HRCS USA, how can I help you today?"
+2. Identify the service needed.
+3. Get the Customer's Name.
+4. Get the Address in Katy, TX.
+5. Once all info is collected, say: "Thank you, a specialist will contact you shortly. Goodbye!" and add the tag [LEAD_COMPLETE].
 `;
 
 app.post("/voice", (req, res) => {
     const callSid = req.body.CallSid;
-    leads.set(callSid, { name: "", service: "", address: "" }); // Створюємо запис у CRM
+    activeCalls.set(callSid, { data: "" });
 
     res.type("text/xml");
     res.send(`
         <Response>
-            <Say voice="Polly.Joanna-Neural" language="uk-UA">Вітаємо у HRCS USA! Яку послугу ви шукаєте?</Say>
-            <Gather input="speech" action="/respond" language="uk-UA" speechTimeout="auto" />
+            <Say voice="Polly.Joanna-Neural" language="en-US">
+                Thank you for calling HRCS USA. How can I help you?
+            </Say>
+            <Gather input="speech" action="/respond" language="en-US" speechTimeout="auto" />
         </Response>
     `);
 });
@@ -39,37 +43,33 @@ app.post("/voice", (req, res) => {
 app.post("/respond", async (req, res) => {
     const callSid = req.body.CallSid;
     const userSpeech = req.body.SpeechResult;
-    const currentLead = leads.get(callSid);
 
     try {
         const completion = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
                 { role: "system", content: SYSTEM_PROMPT },
-                { role: "user", content: `Customer said: ${userSpeech}. Current data: ${JSON.stringify(currentLead)}` }
+                { role: "user", content: userSpeech }
             ]
         });
 
         const aiReply = completion.choices[0].message.content;
 
-        // ЛОГІКА CRM: Якщо дані зібрані
+        res.type("text/xml");
         if (aiReply.includes("[LEAD_COMPLETE]")) {
-            console.log("🎯 НОВИЙ ЛІД СФОРМОВАНО:", currentLead);
-            // ТУТ МИ БУДЕМО ВІДПРАВЛЯТИ В TELEGRAM
-            res.type("text/xml");
             res.send(`
                 <Response>
-                    <Say voice="Polly.Joanna-Neural" language="uk-UA">${aiReply.replace("[LEAD_COMPLETE]", "")}</Say>
+                    <Say voice="Polly.Joanna-Neural" language="en-US">${aiReply.replace("[LEAD_COMPLETE]", "")}</Say>
                     <Hangup/>
                 </Response>
             `);
         } else {
-            res.type("text/xml");
             res.send(`
                 <Response>
-                    <Gather input="speech" action="/respond" language="uk-UA" speechTimeout="auto">
-                        <Say voice="Polly.Joanna-Neural" language="uk-UA">${aiReply}</Say>
+                    <Gather input="speech" action="/respond" language="en-US" speechTimeout="auto">
+                        <Say voice="Polly.Joanna-Neural" language="en-US">${aiReply}</Say>
                     </Gather>
+                    <Redirect>/respond</Redirect>
                 </Response>
             `);
         }
@@ -79,4 +79,4 @@ app.post("/respond", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Professional Engine Running`));
+app.listen(PORT, () => console.log(`🚀 English AI Engine is Active`));
