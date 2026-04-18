@@ -2,173 +2,81 @@ import express from "express";
 import OpenAI from "openai";
 
 const app = express();
-
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ===============================
-// CRM STATE (PRO STRUCTURE)
-// ===============================
-let session = {
-    phase: "problem",
-    lead: {
-        name: "",
-        phone: "",
-        address: "",
-        service: "",
-        issue: "",
-        details: "",
-        datetime: ""
-    }
-};
+// СИСТЕМА CRM (Тимчасова, поки не підключимо Telegram/Make)
+const leads = new Map(); 
 
-// ===============================
-// VOICE ENTRY
-// ===============================
+const SYSTEM_PROMPT = `
+You are a professional HRCS USA dispatcher. 
+Follow these logical steps:
+1. Greet and identify which of our services they need.
+2. Ask for their Name and Address in Katy, TX.
+3. Once you have the info, end the call professionally.
+
+SERVICES: Garage Doors, Electrical, TV Installation, Appliances, Security, Locksmith, Furniture Assembly, General Mounting.
+
+OUTPUT FORMAT: Always respond in Ukrainian or English (match the customer). 
+If you have collected Name, Service, and Address, include the tag [LEAD_COMPLETE] at the end.
+`;
+
 app.post("/voice", (req, res) => {
+    const callSid = req.body.CallSid;
+    leads.set(callSid, { name: "", service: "", address: "" }); // Створюємо запис у CRM
+
     res.type("text/xml");
-
-    session.phase = "problem";
-    session.lead = {};
-
     res.send(`
-<Response>
-    <Say voice="Polly.Joanna-Neural" language="en-US">
-        Thank you for calling H R C S USA. Tell me what issue you're experiencing.
-    </Say>
-
-    <Gather input="speech" action="/respond" method="POST" language="en-US" speechTimeout="auto" timeout="8"/>
-</Response>
+        <Response>
+            <Say voice="Polly.Joanna-Neural" language="uk-UA">Вітаємо у HRCS USA! Яку послугу ви шукаєте?</Say>
+            <Gather input="speech" action="/respond" language="uk-UA" speechTimeout="auto" />
+        </Response>
     `);
 });
 
-// ===============================
-// PHASE CONTROLLER (SERVER DECIDES FLOW)
-// ===============================
-function getNextPhase(current) {
-    const order = ["problem", "details", "contact", "scheduling", "done"];
-    const index = order.indexOf(current);
-    return order[Math.min(index + 1, order.length - 1)];
-}
-
-// ===============================
-// MAIN HANDLER
-// ===============================
 app.post("/respond", async (req, res) => {
-    const userSpeech = req.body.SpeechResult || "";
-
-    res.type("text/xml");
+    const callSid = req.body.CallSid;
+    const userSpeech = req.body.SpeechResult;
+    const currentLead = leads.get(callSid);
 
     try {
-
-        // ===============================
-        // AI EXTRACTION ONLY (NO FLOW CONTROL)
-        // ===============================
         const completion = await openai.chat.completions.create({
             model: "gpt-4o-mini",
-            response_format: { type: "json_object" },
             messages: [
-                {
-                    role: "system",
-                    content: `
-Extract structured data from customer speech.
-
-Return JSON:
-{
-  "reply": "natural short human response",
-  "service": "",
-  "issue": "",
-  "details": "",
-  "name": "",
-  "phone": "",
-  "address": ""
-}
-
-Rules:
-- DO NOT control conversation flow
-- ONLY extract info + generate natural reply
-- No robotic phrases
-                    `
-                },
-                {
-                    role: "user",
-                    content: userSpeech
-                }
+                { role: "system", content: SYSTEM_PROMPT },
+                { role: "user", content: `Customer said: ${userSpeech}. Current data: ${JSON.stringify(currentLead)}` }
             ]
         });
 
-        let ai;
+        const aiReply = completion.choices[0].message.content;
 
-        try {
-            ai = JSON.parse(completion.choices[0].message.content);
-        } catch (e) {
-            ai = { reply: "Could you repeat that please?" };
+        // ЛОГІКА CRM: Якщо дані зібрані
+        if (aiReply.includes("[LEAD_COMPLETE]")) {
+            console.log("🎯 НОВИЙ ЛІД СФОРМОВАНО:", currentLead);
+            // ТУТ МИ БУДЕМО ВІДПРАВЛЯТИ В TELEGRAM
+            res.type("text/xml");
+            res.send(`
+                <Response>
+                    <Say voice="Polly.Joanna-Neural" language="uk-UA">${aiReply.replace("[LEAD_COMPLETE]", "")}</Say>
+                    <Hangup/>
+                </Response>
+            `);
+        } else {
+            res.type("text/xml");
+            res.send(`
+                <Response>
+                    <Gather input="speech" action="/respond" language="uk-UA" speechTimeout="auto">
+                        <Say voice="Polly.Joanna-Neural" language="uk-UA">${aiReply}</Say>
+                    </Gather>
+                </Response>
+            `);
         }
-
-        // ===============================
-        // UPDATE CRM
-        // ===============================
-        session.lead = {
-            ...session.lead,
-            ...ai
-        };
-
-        // ===============================
-        // SERVER CONTROLS FLOW (PRO LOGIC)
-        // ===============================
-        if (session.phase === "problem") {
-            session.phase = "details";
-        } else if (session.phase === "details") {
-            if (ai.issue && ai.issue.length > 3) {
-                session.phase = "contact";
-            }
-        } else if (session.phase === "contact") {
-            if (session.lead.name && session.lead.phone && session.lead.address) {
-                session.phase = "scheduling";
-            }
-        }
-
-        const responseText = escapeXml(ai.reply || "Okay, go on.");
-
-        res.send(`
-<Response>
-    <Say voice="Polly.Joanna-Neural" language="en-US">
-        ${responseText}
-    </Say>
-
-    <Pause length="1"/>
-
-    <Gather input="speech" action="/respond" method="POST" language="en-US" speechTimeout="auto" timeout="8"/>
-</Response>
-        `);
-
     } catch (error) {
-        console.error(error);
-
-        res.send(`
-<Response>
-    <Say voice="Polly.Joanna-Neural" language="en-US">
-        Sorry, there was an issue. Please try again.
-    </Say>
-</Response>
-        `);
+        res.send(`<Response><Hangup/></Response>`);
     }
 });
 
-// ===============================
-function escapeXml(text = "") {
-    return text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&apos;");
-}
-
-// ===============================
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-    console.log("🚀 HRCS PRO AI SYSTEM RUNNING");
-});
+app.listen(PORT, () => console.log(`🚀 Professional Engine Running`));
